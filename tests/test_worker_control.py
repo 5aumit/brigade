@@ -254,10 +254,13 @@ class WorkerControlTests(unittest.TestCase):
         self.assertEqual(calls, [["orchestration", "worker-release", "--dispatch", "dispatch_123"]])
         self.assertIn("child worktree remains", detail)
 
-    def test_orca_release_reports_retained_terminal(self):
+    def test_orca_release_accepts_user_owned_terminal(self):
         backend = control.OrcaBackend()
         backend.call = lambda _arguments, _description: {"result": {"state": "retained", "reason": "user_takeover"}}
-        with self.assertRaisesRegex(control.WorkerError, "retained \\(user_takeover\\)"):
+        detail = backend.release({"backend_session": {"dispatch_id": "dispatch_123"}})
+        self.assertIn("left the terminal with the user", detail)
+        backend.call = lambda _arguments, _description: {"result": {"state": "retained", "reason": "release_pending"}}
+        with self.assertRaisesRegex(control.WorkerError, "retained \\(release_pending\\)"):
             backend.release({"backend_session": {"dispatch_id": "dispatch_123"}})
 
     def test_orca_backend_failure_is_unverifiable_not_disappeared(self):
@@ -493,6 +496,92 @@ class WorkerControlTests(unittest.TestCase):
         self.assertIsNone(control.cursor_new_worktree_warning("cursor", "current"))
         self.assertIsNone(control.cursor_new_worktree_warning("cursor", "/repo/existing"))
         self.assertIsNone(control.cursor_new_worktree_warning("codex", "new"))
+
+    def follow_up_worker(self, backend, status="completed", path="/repo/task"):
+        return {
+            "id": "w_follow", "status": status, "task": {"title": "Fix the gate"},
+            "configuration": {"backend": backend},
+            "worktree": {"path": path, "kind": "current"},
+            "backend_session": {"dispatch_id": "dispatch_old", "task_id": "task_old", "terminal_id": "term_1", "run_id": "run_1", "agent_name": "w-fix"},
+            "events": [], "updated_at": "now",
+        }
+
+    def test_herdr_follow_up_prompts_completed_agent_and_reclaims_worktree(self):
+        worker = self.follow_up_worker("herdr")
+        state = {"version": 1, "workers": [worker]}
+        saved = []
+        backend = control.HerdrBackend()
+        calls = []
+        backend.call = lambda arguments, _description: calls.append(arguments) or {"ok": True}
+        original = control.backend_for
+        control.backend_for = lambda _name: backend
+        try:
+            detail = control.deliver_follow_up(state, worker, "check the other caller", lambda: saved.append(worker["status"]))
+        finally:
+            control.backend_for = original
+        self.assertEqual(calls, [["agent", "prompt", "w-fix", "check the other caller"]])
+        self.assertEqual(worker["status"], "active")
+        self.assertEqual(saved, ["active"])
+        self.assertEqual(detail, "Follow-up submitted to the Herdr agent.")
+        with self.assertRaisesRegex(control.WorkerError, "w_follow"):
+            control.assert_available_worktree(state, "/repo/task")
+
+    def test_follow_up_refuses_released_failed_and_occupied_workers(self):
+        released = self.follow_up_worker("herdr")
+        released["events"] = [{"kind": "released"}]
+        with self.assertRaisesRegex(control.WorkerError, "released"):
+            control.deliver_follow_up({"version": 1, "workers": [released]}, released, "again")
+        failed = self.follow_up_worker("herdr", status="failed")
+        with self.assertRaisesRegex(control.WorkerError, "failed"):
+            control.deliver_follow_up({"version": 1, "workers": [failed]}, failed, "again")
+        completed = self.follow_up_worker("herdr")
+        other = self.worker(worker_id="w_other", path="/repo/task", status="active")
+        with self.assertRaisesRegex(control.WorkerError, "w_other"):
+            control.deliver_follow_up({"version": 1, "workers": [completed, other]}, completed, "again")
+        self.assertEqual(completed["status"], "completed")
+
+    def test_herdr_follow_up_failure_returns_the_worker_to_completed(self):
+        worker = self.follow_up_worker("herdr")
+        state = {"version": 1, "workers": [worker]}
+        saved = []
+        backend = control.HerdrBackend()
+
+        def fail(arguments, _description):
+            raise control.WorkerError("agent_blocked")
+
+        backend.call = fail
+        original = control.backend_for
+        control.backend_for = lambda _name: backend
+        try:
+            with self.assertRaisesRegex(control.WorkerError, "agent_blocked"):
+                control.deliver_follow_up(state, worker, "again", lambda: saved.append(worker["status"]))
+        finally:
+            control.backend_for = original
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(saved, ["active", "completed"])
+
+    def test_orca_completed_follow_up_is_refused(self):
+        worker = self.follow_up_worker("orca")
+        with self.assertRaisesRegex(control.WorkerError, "completed Orca"):
+            control.deliver_follow_up({"version": 1, "workers": [worker]}, worker, "again")
+        self.assertEqual(worker["status"], "completed")
+
+    def test_orca_active_follow_up_stays_on_the_open_dispatch(self):
+        worker = self.follow_up_worker("orca", status="active")
+        backend = control.OrcaBackend()
+        calls = []
+        backend.call = lambda arguments, _description: calls.append(arguments) or {"ok": True}
+        original = control.backend_for
+        control.backend_for = lambda _name: backend
+        try:
+            control.deliver_follow_up({"version": 1, "workers": [worker]}, worker, "steer this attempt")
+        finally:
+            control.backend_for = original
+        self.assertEqual(calls, [[
+            "orchestration", "send", "--to", "dispatch:dispatch_old", "--subject", "Brigade follow-up",
+            "--body", "steer this attempt", "--type", "status",
+        ]])
+        self.assertEqual(worker["backend_session"]["dispatch_id"], "dispatch_old")
 
 
 if __name__ == "__main__":

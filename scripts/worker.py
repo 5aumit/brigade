@@ -160,10 +160,7 @@ def command_status(args) -> int:
 def command_send(args) -> int:
     state = control.load_state()
     worker = control.find_worker(state, args.worker_id)
-    if worker["status"] not in control.ACTIVE_STATUSES:
-        raise control.WorkerError(f"Cannot send to a {worker['status']} worker")
-    detail = control.backend_for(worker["configuration"]["backend"]).send(worker, args.message)
-    control.event(worker, "follow_up", detail)
+    detail = control.deliver_follow_up(state, worker, args.message, lambda: control.save_state(state))
     control.save_state(state)
     print(detail)
     return 0

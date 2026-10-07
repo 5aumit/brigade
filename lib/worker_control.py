@@ -153,6 +153,39 @@ def canonical_worktree_path(path: str) -> str:
     return str(Path(path).resolve())
 
 
+def worker_released(worker: dict[str, Any]) -> bool:
+    return any(item.get("kind") == "released" for item in worker.get("events", []))
+
+
+def deliver_follow_up(state: dict[str, Any], worker: dict[str, Any], message: str, persist=None) -> str:
+    if worker_released(worker):
+        raise WorkerError("Cannot send to a released worker")
+    status = worker.get("status")
+    if status == "completed" and worker.get("configuration", {}).get("backend") == "orca":
+        raise WorkerError("Cannot send to a completed Orca worker. Start a new worker.")
+    if status not in ACTIVE_STATUSES and status != "completed":
+        raise WorkerError(f"Cannot send to a {status} worker")
+    if status == "completed":
+        path = (worker.get("worktree") or {}).get("path")
+        if not isinstance(path, str) or not path:
+            raise WorkerError("Completed worker has no worktree to reclaim")
+        assert_available_worktree(state, path, exclude=worker["id"])
+        event(worker, "reclaimed", "Reclaimed the worktree for a follow-up.", status="active")
+        if persist:
+            persist()
+    backend = backend_for(worker["configuration"]["backend"])
+    try:
+        detail = backend.resume(worker, message, persist) if status == "completed" else backend.send(worker, message)
+    except Exception as error:
+        if status == "completed":
+            event(worker, "follow_up_failed", str(error), status="completed")
+            if persist:
+                persist()
+        raise
+    event(worker, "follow_up", detail)
+    return detail
+
+
 def occupied_worktrees(state: dict[str, Any]) -> dict[str, str]:
     return {
         canonical_worktree_path(worker["worktree"]["path"]): worker["id"]
@@ -468,6 +501,9 @@ class Backend:
     def send(self, worker: dict[str, Any], message: str) -> str:
         raise NotImplementedError
 
+    def resume(self, worker: dict[str, Any], message: str, persist=None) -> str:
+        return self.send(worker, message)
+
     def open(self, worker: dict[str, Any]) -> str:
         raise NotImplementedError
 
@@ -540,7 +576,7 @@ class OrcaBackend(Backend):
             raise WorkerError("Orca did not return a dispatch identifier")
         worktree = named_object(response, "worktree")
         actual_worktree = text_value(response, "worktreePath") or (worktree or {}).get("path") or worker["worktree"]["path"]
-        terminal_id = text_value(response, "terminalHandle", "terminal_id", "terminal")
+        terminal_id = text_value(response, "terminalHandle", "agentTerminalHandle", "terminal_id")
         task = named_object(response, "task")
         task_id = (task or {}).get("id")
         session = {"dispatch_id": dispatch_id, "task_id": task_id, "terminal_id": terminal_id, "run_id": run_id, "launch_started": True}
@@ -632,6 +668,8 @@ class OrcaBackend(Backend):
         response = self.call(["orchestration", "worker-release", "--dispatch", worker["backend_session"]["dispatch_id"]], "Release Orca worker terminal")
         result = response.get("result", {})
         state = result.get("state")
+        if state == "retained" and result.get("reason") == "user_takeover":
+            return "Orca left the terminal with the user. The worker is released."
         if state not in {"released", "already_released"}:
             reason = result.get("reason")
             detail = f" ({reason})" if reason else ""

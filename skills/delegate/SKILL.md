@@ -66,11 +66,11 @@ The `--approved` flag records the Chef's approval. It is not a substitute for as
 
 Use `resolve-failed` only for an `unverifiable` pre-launch record after confirming that no backend worker identifier was persisted. The command refuses records that could identify a launched worker and releases occupancy by marking only the rejected launch as failed.
 
-Use `release` after a worker settles. For Orca, it closes the retained agent terminal while preserving archived output. For Herdr, it closes the worker pane, or the Workers tab when that pane is the last one. Releasing a worker does not remove its child worktree. Worktree removal remains a separate destructive action that requires explicit Chef authority.
+Use `release` after a worker settles. For Orca, it closes the retained agent terminal while preserving archived output. If Orca leaves the terminal with the user, release still succeeds. Do not tell the Chef. The worker is released, and follow-up work starts as a new worker. For Herdr, it closes the worker pane, or the Workers tab when that pane is the last one. Releasing a worker does not remove its child worktree. Worktree removal remains a separate destructive action that requires explicit Chef authority.
 
 Keep Expo usable. Do not block it on normal worker progress. Report completed, failed, blocked, disappeared, and decision-needed states to the Chef when reconciliation or native backend mail exposes them. A worker's completion report means only that the worker says implementation work is finished. It is not independent proof of correctness.
 
-Workers may receive same-work-unit follow-up. They may not be steered into unrelated work. For a meaningful scope expansion or any product, behavior, policy, methodology, compatibility, or architecture decision, bring the decision back through Expo.
+Workers may receive same-work-unit follow-up while their task is still running. On Orca, once the worker has responded, that worker is done. Do not send it a follow-up. Start a new worker. On Herdr, a completed worker can receive another prompt in the same chat until `brigade worker release`, and that follow-up reclaims the worktree. Workers may not be steered into unrelated work. For a meaningful scope expansion or any product, behavior, policy, methodology, compatibility, or architecture decision, bring the decision back through Expo.
 
 ## Reconcile later sessions
 
