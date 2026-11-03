@@ -527,7 +527,9 @@ class OrcaBackend(Backend):
         return command
 
     def call(self, arguments: list[str], description: str, *, cwd: str | None = None) -> dict[str, Any]:
-        return json_output([self.command(), *arguments, "--json"], description, cwd=cwd)
+        # Orca 1.4.247+ prints a concise orchestration view by default; Brigade parses the full record.
+        full = ["--full"] if arguments[0] == "orchestration" else []
+        return json_output([self.command(), *arguments, "--json", *full], description, cwd=cwd)
 
     def existing_worktree_selector(self, path: str) -> str:
         response = self.call(["worktree", "current"], "Resolve Orca worktree", cwd=path)
@@ -547,7 +549,7 @@ class OrcaBackend(Backend):
             run = named_object(run_response, "run")
         run_id = run.get("id") if run else None
         if not isinstance(run_id, str):
-            raise WorkerError("Orca did not return a durable Run identifier")
+            raise WorkerError(f"Orca did not return a durable Run identifier. Response: {json.dumps(run_response)[:300]}")
         worker["backend_session"] = {"run_id": run_id}
         if persist:
             persist()

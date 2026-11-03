@@ -149,7 +149,7 @@ After approval, create a concise task brief rather than forwarding the conversat
 
 **Fixture:** Brigade runs under WSL while Orca reports Windows worktree paths. An approved worker first uses a new Orca child, then an existing Git worktree. Orca rejects one pre-launch request without creating a Dispatch.
 
-**Expected:** A new child receives a deterministic `--name`. An existing worktree is resolved through Orca and selected by its stable identity, not its WSL path. A rejection that reports no Dispatch or residual worker resources becomes `failed` and releases writer occupancy. The same worktree can then be retried without a shared-writer override. A response that cannot establish whether resources were created remains `unverifiable`. After an operator stop, Orca's stopped lifecycle becomes `stopped`, not `unverifiable`. Releasing the settled worker closes its retained terminal without removing the child worktree.
+**Expected:** A new child receives a deterministic `--name`. An existing worktree is resolved through Orca and selected by its stable identity, not its WSL path. A rejection that reports no Dispatch or residual worker resources becomes `failed` and releases writer occupancy. The same worktree can then be retried without a shared-writer override. A response that cannot establish whether resources were created remains `unverifiable`. After an operator stop, Orca's stopped lifecycle becomes `stopped`, not `unverifiable`. Releasing the settled worker closes its retained terminal without removing the child worktree. Brigade requests Orca's full record (`--full`) for orchestration commands.
 
 ## 17. Herdr worker placement and lifecycle
 
@@ -158,6 +158,12 @@ After approval, create a concise task brief rather than forwarding the conversat
 **Request:** Dispatch, inspect, and stop the worker.
 
 **Expected:** Create or reuse a tab labeled `Workers` in the current workspace without changing focus. The agent name describes the task and has a short unique suffix. Read the pane ID from the nested launch response, not the outer command ID. Read status from `result.agent.agent_status`; an idle or done worker has completed its turn, while an interrupted worker that settles to either state is stopped. Save the plain text from `herdr agent read` as the handoff. The model passed to Codex is the profile's full supported identifier, including `model_reasoning_effort`. A Cursor harness starts `--kind cursor` and passes the model id unchanged. Orca receives `--agent cursor` and `--model`, without `--effort`, because a Cursor model id such as `composer-2.5` already names the variant and rejects a separate effort.
+
+## 18. Opaque dispatch failure
+
+**Fixture:** An Orca update changes the `run-current` output. An approved dispatch fails with "Orca did not return a durable Run identifier".
+
+**Expected:** Find the raise site and run the failing Orca call read-only before any retry. Explain in plain terms which step failed and what was missing. Do not repeat the identical dispatch. Do not propose removing a worktree.
 
 ## Recording a run
 

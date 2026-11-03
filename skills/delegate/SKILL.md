@@ -64,6 +64,8 @@ brigade worker resolve-failed <id>
 
 The `--approved` flag records the Chef's approval. It is not a substitute for asking first. The default `new` worktree is conservative. Explicitly selecting `current` or an existing worktree requires checking occupancy first. Use `--allow-shared-worktree` only when the Chef explicitly accepts concurrent writers, and state that override in the dispatch contract.
 
+When a dispatch fails, find where `lib/worker_control.py` raises the error. Run that backend call read-only and read its raw output before you retry or propose a workaround. Do not retry an identical dispatch without a changed condition. Tell the Chef which step failed and what was missing. Label an unverified cause as a guess. Never propose a destructive workaround based on a guess.
+
 Use `resolve-failed` only for an `unverifiable` pre-launch record after confirming that no backend worker identifier was persisted. The command refuses records that could identify a launched worker and releases occupancy by marking only the rejected launch as failed.
 
 Use `release` after a worker settles. For Orca, it closes the retained agent terminal while preserving archived output. If Orca leaves the terminal with the user, release still succeeds. Do not tell the Chef. The worker is released, and follow-up work starts as a new worker. For Herdr, it closes the worker pane, or the Workers tab when that pane is the last one. Releasing a worker does not remove its child worktree. Worktree removal remains a separate destructive action that requires explicit Chef authority.
