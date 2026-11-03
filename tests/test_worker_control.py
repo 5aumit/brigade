@@ -147,6 +147,15 @@ class WorkerControlTests(unittest.TestCase):
         self.assertIn("run_123", calls[-1])
         self.assertIn("--effort", calls[-1])
 
+    def test_orca_orchestration_calls_request_full_record(self):
+        backend = control.OrcaBackend()
+        backend.command = lambda: "orca"
+        commands = []
+        with mock.patch.object(control, "json_output", lambda command, *_args, **_kwargs: commands.append(command) or {}):
+            backend.call(["orchestration", "run-current"], "Inspect Orca run")
+            backend.call(["worktree", "current"], "Resolve Orca worktree")
+        self.assertEqual(commands, [["orca", "orchestration", "run-current", "--json", "--full"], ["orca", "worktree", "current", "--json"]])
+
     def test_orca_cursor_launch_omits_effort(self):
         worker = {
             "id": "w_cursor", "brief": "read only", "task": {"title": "Read install commands"},
