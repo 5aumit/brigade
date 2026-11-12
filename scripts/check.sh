@@ -16,6 +16,7 @@ for required in \
   bin/brigade \
   bin/5stack \
   lib/worker_control.py \
+  lib/updater.py \
   references/trust-handoff.md \
   scripts/worker.py \
   evals/scenarios.md; do
@@ -70,7 +71,7 @@ bash -n "$STACK_REPO/scripts/uninstall.sh"
 bash -n "$STACK_REPO/scripts/check.sh"
 bash -n "$STACK_REPO/bin/brigade"
 bash -n "$STACK_REPO/bin/5stack"
-python3 -m py_compile "$STACK_REPO/lib/worker_control.py" "$STACK_REPO/scripts/worker.py"
+python3 -m py_compile "$STACK_REPO/lib/worker_control.py" "$STACK_REPO/lib/updater.py" "$STACK_REPO/scripts/worker.py"
 python3 -m unittest discover -s "$STACK_REPO/tests"
 
 CHECK_TMP=$(mktemp -d)

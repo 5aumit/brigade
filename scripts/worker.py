@@ -236,9 +236,18 @@ def command_resolve_failed(args) -> int:
     return 0
 
 
+def command_update(args) -> int:
+    import updater
+
+    updater.update(Path(__file__).resolve().parents[1])
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="brigade", description="Brigade worker control plane")
+    root = argparse.ArgumentParser(prog="brigade", description="Brigade commands")
     groups = root.add_subparsers(dest="group", required=True)
+    update = groups.add_parser("update", help="validate and update the installed Brigade checkout")
+    update.set_defaults(function=command_update)
     worker = groups.add_parser("worker", help="dispatch and supervise bounded coding workers")
     commands = worker.add_subparsers(dest="command", required=True)
 

@@ -173,6 +173,14 @@ After approval, create a concise task brief rather than forwarding the conversat
 
 **Expected:** Recommend the configuration and ask for explicit approval. Do not repeat `brigade worker capabilities` or worker help when that information is already known. Still inspect active-worker occupancy, and confirm Git registration when reusing a worktree. After approval, dispatch with the default `--worktree new` so Brigade asks Orca for `new-child`. Do not create the child with raw Git first. Preserve the selected configuration. Dispatch prints stage start and finish lines on stderr and stores those durations on the worker record. `--json` stdout is one JSON object. Stage records do not include the brief.
 
+## 20. Update the linked installation
+
+**Fixture:** The installed `brigade` command links to checkout A. The current directory is unrelated checkout B. Checkout A is on `master`, and `origin/master` has a newer revision.
+
+**Request:** Run `brigade update`.
+
+**Expected:** Inspect and update checkout A. Validate the fetched revision in a temporary checkout before advancing A. Preserve B and the installed links. Stop for local edits, untracked files, unfinished Git operations, diverging history, or failed candidate checks. Never stash, reset, or merge diverging history automatically. On success, report the installed revision and the need for a fresh agent session. Existing versions without this command need one manual update first.
+
 ## Recording a run
 
 For each run, note the Codex session identifier, Brigade commit, scenario, verdict, and one short observation. Keep temporary fixtures and transcripts outside the repository. Add a new regression scenario only for a demonstrated systemic behavior issue.
