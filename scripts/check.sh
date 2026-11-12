@@ -98,7 +98,7 @@ XDG_STATE_HOME="$CHECK_TMP/fresh-state" "$FRESH_BIN_DIR/brigade" worker list >/d
 XDG_STATE_HOME="$CHECK_TMP/fresh-state" "$FRESH_BIN_DIR/5stack" worker list >/dev/null || fail "installed legacy 5stack command did not run"
 mkdir -p "$CHECK_TMP/legacy-state/5stack"
 printf '{"version": 1, "workers": [{"id": "w_legacy"}]}\n' > "$CHECK_TMP/legacy-state/5stack/workers.json"
-XDG_STATE_HOME="$CHECK_TMP/legacy-state" "$FRESH_BIN_DIR/brigade" worker list --json | grep -q 'w_legacy' || fail "Brigade did not retain legacy worker history"
+XDG_STATE_HOME="$CHECK_TMP/legacy-state" "$FRESH_BIN_DIR/brigade" worker list --all --json | grep -q 'w_legacy' || fail "Brigade did not retain legacy worker history"
 
 mkdir -p "$TEST_BIN_DIR" "$TEST_AGENTS_DIR/skills" "$TEST_AGENTS_DIR/5stack-backups/v1/skills" "$TEST_AGENTS_DIR/5stack-backups/v1/bin"
 printf 'original global instructions\n' > "$TEST_AGENTS_DIR/5stack-backups/v1/AGENTS.md"

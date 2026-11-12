@@ -11,7 +11,7 @@ Expo remains the Chef's interface. A worker is disposable and belongs to one wor
 
 ## Recommend before dispatch
 
-Inspect the repository, current worktree occupancy, backend capability, task complexity, uncertainty, stakes, reversibility, implementation judgment, expected cost, and verification difficulty. Use `brigade worker recommend` when its deterministic profile selection helps present the result.
+Inspect the repository, current worktree occupancy, backend capability, task complexity, uncertainty, stakes, reversibility, implementation judgment, expected cost, and verification difficulty. Use `brigade worker recommend` when its deterministic profile selection helps present the result. If this session already knows backend availability and the selected configuration, do not repeat `brigade worker capabilities` or worker `--help`. Still check active-worker occupancy and preserve that configuration.
 
 State the suggested configuration separately:
 
@@ -47,7 +47,7 @@ Reference existing specifications, issues, commits, or documentation instead of 
 
 ## Dispatch and supervise
 
-Before dispatch, inspect `git worktree list`, active `brigade worker list` records, and backend capability. Do not permit two active writers in one worktree unless the Chef expressly overrides the protection.
+Before dispatch, inspect `git worktree list` and active `brigade worker list` records. When selecting `current` or an existing worktree, confirm its Git registration. Skip another capability probe when this session already knows the backend. Do not permit two active writers in one worktree unless the Chef expressly overrides the protection.
 
 Use the shared control plane:
 
@@ -62,7 +62,7 @@ brigade worker reconcile
 brigade worker resolve-failed <id>
 ```
 
-The `--approved` flag records the Chef's approval. It is not a substitute for asking first. The default `new` worktree is conservative. Explicitly selecting `current` or an existing worktree requires checking occupancy first. Use `--allow-shared-worktree` only when the Chef explicitly accepts concurrent writers, and state that override in the dispatch contract.
+The `--approved` flag records the Chef's approval. It is not a substitute for asking first. On Orca, keep the default `--worktree new`. Brigade asks Orca for `new-child` and records the path Orca returns. Do not create that worktree with `git worktree add` first. On Herdr, `--worktree new` creates the Brigade Git worktree. Explicitly selecting `current` or an existing worktree requires checking occupancy first. Use `--allow-shared-worktree` only when the Chef explicitly accepts concurrent writers, and state that override in the dispatch contract.
 
 When a dispatch fails, find where `lib/worker_control.py` raises the error. Run that backend call read-only and read its raw output before you retry or propose a workaround. Do not retry an identical dispatch without a changed condition. Tell the Chef which step failed and what was missing. Label an unverified cause as a guess. Never propose a destructive workaround based on a guess.
 

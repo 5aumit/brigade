@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
@@ -54,7 +55,11 @@ def command_capabilities(args) -> int:
 
 def command_recommend(args) -> int:
     profile = control.choose_profile(args.assurance, args.complexity, args.uncertainty, args.verification, args.judgment)
-    backend = control.discover_backend(args.backend) if args.backend != "auto" or any(item["available"] for item in control.capability_report().values()) else "current/default"
+    report = control.capability_report() if args.backend == "auto" else control.capability_report(args.backend)
+    if args.backend == "auto" and not any(item["available"] for item in report.values()):
+        backend = "current/default"
+    else:
+        backend = control.discover_backend(args.backend, report)
     value = {"assurance": args.assurance.upper(), "ownership": args.ownership.upper(), "backend": backend, **profile}
     if args.json:
         output(value, True)
@@ -73,48 +78,58 @@ def command_recommend(args) -> int:
 def command_dispatch(args) -> int:
     if not args.approved:
         raise control.WorkerError("Dispatch requires explicit approval. Ask the user, then rerun with --approved.")
+    stages: list = []
     state = control.load_state()
-    backend_name = control.discover_backend(args.backend)
+    backend_name = control.measure_stage("backend_discovery", lambda: control.discover_backend(args.backend), stages)
     profile = control.PROFILES.get(args.profile) if args.profile else None
     harness = args.harness or (profile or {}).get("harness", "codex")
     model = args.model or (profile or {}).get("model", "gpt-5.6-luna")
     reasoning = args.reasoning or (profile or {}).get("reasoning", "medium")
     configuration = control.resolved_configuration(backend_name, harness, model, reasoning, args.profile)
-    repository = control.git_repository(args.repository)
-    worker_id = "w_" + __import__("uuid").uuid4().hex[:12]
-    if args.worktree == "current":
-        worktree = repository["path"]
-        kind = "current"
-    elif args.worktree == "new":
-        worktree = repository["path"] if backend_name == "orca" else control.create_worktree(repository, worker_id)
-        kind = "backend-child" if backend_name == "orca" else "created"
-    else:
-        worktree = str(Path(args.worktree).resolve())
-        if worktree not in control.git_worktrees(repository["path"]):
-            raise control.WorkerError(f"Selected worktree is not registered by Git: {worktree}")
-        kind = "existing"
-    shared_worktree = False
-    if not (backend_name == "orca" and args.worktree == "new"):
-        try:
-            control.assert_available_worktree(state, worktree)
-        except control.WorkerError:
-            if not args.allow_shared_worktree:
-                raise
-            shared_worktree = True
+
+    def prepare_worktree():
+        repository = control.git_repository(args.repository)
+        worker_id = "w_" + uuid.uuid4().hex[:12]
+        shared_worktree = False
+        if args.worktree == "current":
+            worktree = repository["path"]
+            kind = "current"
+        elif args.worktree == "new":
+            worktree = repository["path"] if backend_name == "orca" else control.create_worktree(repository, worker_id)
+            kind = "backend-child" if backend_name == "orca" else "created"
+        else:
+            worktree = str(Path(args.worktree).resolve())
+            if worktree not in control.git_worktrees(repository["path"]):
+                raise control.WorkerError(f"Selected worktree is not registered by Git: {worktree}")
+            kind = "existing"
+        if not (backend_name == "orca" and args.worktree == "new"):
+            try:
+                control.assert_available_worktree(state, worktree)
+            except control.WorkerError:
+                if not args.allow_shared_worktree:
+                    raise
+                shared_worktree = True
+        return worker_id, repository, worktree, kind, shared_worktree
+
+    worker_id, repository, worktree, kind, shared_worktree = control.measure_stage("worktree_preparation", prepare_worktree, stages)
     worker = control.new_worker(args.title, brief_from(args), configuration, repository, worktree, kind)
     # Keep the generated ID stable across state and any generated worktree path.
     worker["id"] = worker_id
     worker["task"]["id"] = worker_id
     worker["worktree"]["shared_by_user_override"] = shared_worktree
+    worker["startup_stages"] = stages
     state["workers"].append(worker)
     control.save_state(state)
 
     def persist_progress():
         control.save_state(state)
 
+    def note(text: str) -> None:
+        print(text, file=sys.stderr if args.json else sys.stdout)
+
     notice = control.cursor_new_worktree_warning(harness, args.worktree)
     if notice:
-        print(notice)
+        note(notice)
     try:
         result = control.backend_for(backend_name).launch(worker, args.worktree, persist_progress)
     except Exception as error:
@@ -128,7 +143,7 @@ def command_dispatch(args) -> int:
     worker["worktree"]["path"] = control.canonical_worktree_path(result.worktree)
     control.event(worker, "launched", f"Launched through {backend_name}.")
     control.save_state(state)
-    print(f"Worker {worker['id']} launched.")
+    note(f"Worker {worker['id']} launched.")
     output(worker, args.json)
     return 0
 
