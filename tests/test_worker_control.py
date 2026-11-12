@@ -4,7 +4,10 @@ import importlib.util
 import io
 import json
 import os
+import stat
+import subprocess
 import tempfile
+import time
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -591,6 +594,270 @@ class WorkerControlTests(unittest.TestCase):
             "--body", "steer this attempt", "--type", "status",
         ]])
         self.assertEqual(worker["backend_session"]["dispatch_id"], "dispatch_old")
+
+    def load_cli(self):
+        path = Path(__file__).resolve().parents[1] / "scripts" / "worker.py"
+        spec = importlib.util.spec_from_file_location("brigade_worker_cli_startup", path)
+        cli = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cli)
+        return cli
+
+    def test_recommend_uses_one_capability_report_and_keeps_auto_fallback(self):
+        cli = self.load_cli()
+        calls = []
+
+        def report(*_args, **_kwargs):
+            calls.append("report")
+            return {"orca": {"available": False, "reason": "down"}, "herdr": {"available": False, "reason": "down"}}
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        argv = ["brigade", "worker", "recommend", "--assurance", "STANDARD", "--backend", "auto", "--json"]
+        with mock.patch.object(control, "capability_report", report), mock.patch("sys.argv", argv), mock.patch("sys.stdout", stdout), mock.patch("sys.stderr", stderr):
+            self.assertEqual(cli.main(), 0)
+        self.assertEqual(calls, ["report"])
+        self.assertEqual(json.loads(stdout.getvalue())["backend"], "current/default")
+
+    def test_recommend_reuses_report_for_explicit_selection(self):
+        cli = self.load_cli()
+        calls = []
+
+        def report(*_args, **_kwargs):
+            calls.append(_args)
+            return {"orca": {"available": False, "reason": "down"}, "herdr": {"available": True, "reason": "ready"}}
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        herdr_argv = ["brigade", "worker", "recommend", "--assurance", "HIGH", "--backend", "herdr", "--json"]
+        with mock.patch.object(control, "capability_report", report), mock.patch("sys.argv", herdr_argv), mock.patch("sys.stdout", stdout), mock.patch("sys.stderr", stderr):
+            self.assertEqual(cli.main(), 0)
+        self.assertEqual(calls, [("herdr",)])
+        self.assertEqual(json.loads(stdout.getvalue())["backend"], "herdr")
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        orca_argv = ["brigade", "worker", "recommend", "--assurance", "STANDARD", "--backend", "orca", "--json"]
+        with mock.patch.object(control, "capability_report", report), mock.patch("sys.argv", orca_argv), mock.patch("sys.stdout", stdout), mock.patch("sys.stderr", stderr):
+            self.assertEqual(cli.main(), 1)
+        self.assertEqual(calls, [("herdr",), ("orca",)])
+        self.assertIn("Orca is unavailable", stderr.getvalue())
+
+    def test_discover_backend_reuses_supplied_report_without_probing(self):
+        def boom(*_args, **_kwargs):
+            raise AssertionError("capability report was probed")
+
+        with mock.patch.object(control, "capability_report", boom):
+            self.assertEqual(control.discover_backend("orca", {"orca": {"available": True, "reason": "ready"}}), "orca")
+            with self.assertRaisesRegex(control.WorkerError, "Herdr is unavailable"):
+                control.discover_backend("herdr", {"herdr": {"available": False, "reason": "down"}})
+
+    def test_explicit_discovery_skips_the_other_backend_probe(self):
+        calls = []
+
+        def fake_run(command, cwd=None):
+            calls.append(command)
+            if command[:2] == ["orca-ide", "status"]:
+                return subprocess.CompletedProcess(command, 0, '{"ok": true, "reachable": true}', "")
+            if command[:2] == ["herdr", "status"]:
+                return subprocess.CompletedProcess(command, 0, "", "")
+            return subprocess.CompletedProcess(command, 1, "", "unexpected")
+
+        with mock.patch.object(control, "run", fake_run), mock.patch.object(control, "orca_cli_command", lambda: "orca-ide"), mock.patch.object(control.shutil, "which", lambda name: "/usr/bin/herdr" if name == "herdr" else None), mock.patch.dict(os.environ, {"HERDR_ENV": "1"}):
+            self.assertEqual(control.discover_backend("orca"), "orca")
+            self.assertEqual(calls, [["orca-ide", "status", "--json"]])
+            calls.clear()
+            full = control.capability_report()
+        self.assertEqual(calls, [["orca-ide", "status", "--json"], ["herdr", "status"]])
+        self.assertIn("orca", full)
+        self.assertIn("herdr", full)
+
+    def test_measure_stage_records_duration_without_exception_text(self):
+        stages = []
+        stderr = io.StringIO()
+
+        def pause():
+            time.sleep(0.02)
+            raise control.WorkerError("token-secret-brief")
+
+        with mock.patch("sys.stderr", stderr):
+            with self.assertRaisesRegex(control.WorkerError, "token-secret-brief"):
+                control.measure_stage("backend_discovery", pause, stages)
+        self.assertNotIn("token-secret-brief", stderr.getvalue())
+        self.assertIn("backend_discovery start", stderr.getvalue())
+        self.assertIn("backend_discovery failed", stderr.getvalue())
+        self.assertGreaterEqual(stages[0]["ms"], 10)
+        self.assertFalse(stages[0]["ok"])
+        self.assertEqual(stages[0]["error"], "WorkerError")
+        self.assertNotIn("token-secret-brief", json.dumps(stages))
+
+    def test_orca_launch_times_run_worktree_and_start_without_the_brief(self):
+        worker = {
+            "id": "w_existing", "brief": "token-secret-brief", "task": {"title": "Existing"},
+            "configuration": {"harness": "codex", "model": "gpt-5.6-luna", "reasoning": "medium"},
+            "worktree": {"path": "/repo/task", "kind": "existing"},
+            "startup_stages": [],
+        }
+        backend = control.OrcaBackend()
+
+        def call(arguments, _description, cwd=None):
+            if arguments[1] == "run-current":
+                return {"result": {"run": {"id": "run_1"}}}
+            if arguments[:2] == ["worktree", "current"]:
+                return {"result": {"worktree": {"identity": {"key": "wt_1"}}}}
+            if arguments[1] == "worker-start":
+                return {"result": {"dispatch": {"id": "d1"}, "launch": {"effective": {"model": "gpt-5.6-luna", "effort": "medium"}}}}
+            raise AssertionError(arguments)
+
+        backend.call = call
+        stderr = io.StringIO()
+        with mock.patch("sys.stderr", stderr):
+            backend.launch(worker, "/repo/task")
+        self.assertEqual([item["stage"] for item in worker["startup_stages"]], ["resolve_run", "resolve_worktree", "start_worker"])
+        self.assertTrue(all(item["ok"] and isinstance(item["ms"], int) for item in worker["startup_stages"]))
+        self.assertIn("resolve_worktree start", stderr.getvalue())
+        self.assertIn("start_worker done", stderr.getvalue())
+        self.assertNotIn("token-secret-brief", stderr.getvalue())
+        self.assertNotIn("token-secret-brief", json.dumps(worker["startup_stages"]))
+
+    def test_orca_start_failure_records_the_stage_and_reraises(self):
+        worker = {
+            "id": "w_fail", "brief": "token-secret-brief", "task": {"title": "Fail"},
+            "configuration": {"harness": "codex", "model": "gpt-5.6-luna", "reasoning": "medium"},
+            "worktree": {"path": "/repo", "kind": "current"},
+            "startup_stages": [{"stage": "backend_discovery", "ms": 1, "ok": True}],
+        }
+        backend = control.OrcaBackend()
+
+        def call(arguments, _description, cwd=None):
+            if arguments[1] == "run-current":
+                return {"result": {"run": {"id": "run_1"}}}
+            raise control.BackendCallError("launch rejected", {"ok": False, "effects": [], "residualResources": []})
+
+        backend.call = call
+        with mock.patch("sys.stderr", io.StringIO()):
+            with self.assertRaises(control.LaunchRejected) as raised:
+                backend.launch(worker, "current")
+        self.assertIs(type(raised.exception.__cause__), control.BackendCallError)
+        self.assertEqual([item["stage"] for item in worker["startup_stages"]], ["backend_discovery", "resolve_run", "start_worker"])
+        self.assertFalse(worker["startup_stages"][-1]["ok"])
+        self.assertNotIn("token-secret-brief", json.dumps(worker["startup_stages"]))
+
+    def write_executable(self, path: Path, text: str) -> None:
+        path.write_text(text, encoding="utf-8")
+        path.chmod(path.stat().st_mode | stat.S_IEXEC)
+
+    def test_dispatch_json_and_failure_with_fake_backends(self):
+        root = Path(self.temporary.name)
+        repo = root / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True, text=True)
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        orca_log = root / "orca.log"
+        herdr_log = root / "herdr.log"
+        self.write_executable(bin_dir / "orca-ide", """#!/bin/sh
+printf '%s\\n' "$*" >> "$ORCA_FAKE_LOG"
+if [ "$1" = "status" ]; then
+  printf '%s\\n' '{"ok":true,"reachable":true}'
+  exit 0
+fi
+case " $* " in
+  *" run-current "*)
+    printf '%s\\n' '{"ok":true,"result":{"run":{"id":"run_fake"}}}'
+    exit 0
+    ;;
+  *" worker-start "*)
+    if [ "$ORCA_FAKE_FAIL" = "1" ]; then
+      printf '%s\\n' '{"ok":false,"effects":[],"residualResources":[]}'
+      exit 1
+    fi
+    printf '%s\\n' '{"ok":true,"result":{"dispatch":{"id":"dispatch_fake"},"task":{"id":"task_fake"},"worktree":{"path":"'"$ORCA_FAKE_WORKTREE"'"},"launch":{"effective":{"model":"'"$ORCA_FAKE_MODEL"'","effort":'"$ORCA_FAKE_EFFORT"'}}}}'
+    exit 0
+    ;;
+esac
+printf '%s\\n' '{"ok":false}'
+exit 1
+""")
+        self.write_executable(bin_dir / "herdr", """#!/bin/sh
+printf '%s\\n' "$*" >> "$HERDR_FAKE_LOG"
+exit 0
+""")
+        brigade = Path(__file__).resolve().parents[1] / "bin" / "brigade"
+        env = os.environ.copy()
+        env.update({
+            "XDG_STATE_HOME": str(root / "state"),
+            "ORCA_CLI_COMMAND": str(bin_dir / "orca-ide"),
+            "ORCA_FAKE_LOG": str(orca_log),
+            "HERDR_FAKE_LOG": str(herdr_log),
+            "HERDR_ENV": "1",
+            "PATH": str(bin_dir) + os.pathsep + env.get("PATH", ""),
+            "ORCA_FAKE_WORKTREE": str(repo.resolve()),
+            "ORCA_FAKE_MODEL": "composer-2.5",
+            "ORCA_FAKE_EFFORT": "null",
+            "ORCA_FAKE_FAIL": "",
+            "ORCA_TERMINAL_HANDLE": "term_test",
+        })
+        recommend = subprocess.run(
+            ["bash", str(brigade), "worker", "recommend", "--assurance", "STANDARD", "--backend", "auto", "--json"],
+            cwd=repo, env=env, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(recommend.returncode, 0, recommend.stderr)
+        self.assertEqual(json.loads(recommend.stdout)["backend"], "orca")
+        self.assertEqual(sum(line.startswith("status ") for line in orca_log.read_text(encoding="utf-8").splitlines()), 1)
+        self.assertEqual(herdr_log.read_text(encoding="utf-8").splitlines(), ["status"])
+        orca_log.write_text("", encoding="utf-8")
+        herdr_log.unlink()
+
+        explicit = subprocess.run(
+            ["bash", str(brigade), "worker", "recommend", "--assurance", "STANDARD", "--backend", "orca", "--json"],
+            cwd=repo, env=env, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(explicit.returncode, 0, explicit.stderr)
+        self.assertEqual(json.loads(explicit.stdout)["backend"], "orca")
+        self.assertEqual(orca_log.read_text(encoding="utf-8").splitlines(), ["status --json"])
+        self.assertFalse(herdr_log.exists())
+        orca_log.write_text("", encoding="utf-8")
+
+        success = subprocess.run(
+            ["bash", str(brigade), "worker", "dispatch", "--approved", "--title", "Timing", "--brief", "token-secret-brief", "--backend", "orca", "--harness", "cursor", "--model", "composer-2.5", "--worktree", "new", "--repository", str(repo), "--json"],
+            cwd=repo, env=env, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(success.returncode, 0, success.stderr)
+        worker = json.loads(success.stdout)
+        self.assertEqual(worker["status"], "active")
+        self.assertEqual(worker["worktree"]["kind"], "backend-child")
+        self.assertEqual([item["stage"] for item in worker["startup_stages"]], ["backend_discovery", "worktree_preparation", "resolve_run", "start_worker"])
+        self.assertTrue(all(item["ok"] for item in worker["startup_stages"]))
+        self.assertIn("backend_discovery start", success.stderr)
+        self.assertIn("start_worker done", success.stderr)
+        self.assertIn("trusts that new folder", success.stderr)
+        self.assertNotIn("trusts that new folder", success.stdout)
+        self.assertNotIn("token-secret-brief", success.stderr)
+        self.assertNotIn("token-secret-brief", json.dumps(worker["startup_stages"]))
+        orca_lines = orca_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(sum(line.startswith("status ") for line in orca_lines), 1)
+        self.assertFalse(herdr_log.exists())
+        listed = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=repo, capture_output=True, text=True, check=True)
+        self.assertEqual(listed.stdout.count("worktree "), 1)
+
+        fail_root = root / "fail-state"
+        env["XDG_STATE_HOME"] = str(fail_root)
+        env["ORCA_FAKE_FAIL"] = "1"
+        orca_log.write_text("", encoding="utf-8")
+        failed = subprocess.run(
+            ["bash", str(brigade), "worker", "dispatch", "--approved", "--title", "Fail", "--brief", "token-secret-brief", "--backend", "orca", "--worktree", "new", "--repository", str(repo), "--json"],
+            cwd=repo, env=env, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(failed.returncode, 1)
+        self.assertEqual(failed.stdout.strip(), "")
+        self.assertIn("start_worker failed", failed.stderr)
+        self.assertNotIn("token-secret-brief", failed.stderr)
+        saved = json.loads((fail_root / "brigade" / "workers.json").read_text(encoding="utf-8"))
+        record = saved["workers"][0]
+        self.assertEqual(record["status"], "failed")
+        self.assertEqual(record["startup_stages"][-1]["stage"], "start_worker")
+        self.assertFalse(record["startup_stages"][-1]["ok"])
+        self.assertIn("launch_failed", [item["kind"] for item in record["events"]])
+        self.assertNotIn("token-secret-brief", json.dumps(record["startup_stages"]))
+        control.assert_available_worktree(saved, str(repo.resolve()))
+        self.assertEqual(sum(line.startswith("status ") for line in orca_log.read_text(encoding="utf-8").splitlines()), 1)
 
 
 if __name__ == "__main__":

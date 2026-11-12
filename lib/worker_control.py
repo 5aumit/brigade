@@ -14,6 +14,8 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -288,12 +290,14 @@ def orca_cli_command() -> str | None:
     return "orca" if shutil.which("orca") else None
 
 
-def discover_backend(requested: str) -> str:
+def discover_backend(requested: str, capabilities: dict[str, dict[str, Any]] | None = None) -> str:
     if requested not in {"auto", "orca", "herdr"}:
         raise WorkerError("Backend must be auto, orca, or herdr")
-    capabilities = capability_report()
-    orca = capabilities["orca"]["available"]
-    herdr = capabilities["herdr"]["available"]
+    if capabilities is None:
+        # auto still needs both backends; an explicit choice probes only that one.
+        capabilities = capability_report() if requested == "auto" else capability_report(requested)
+    orca = bool(capabilities.get("orca", {}).get("available"))
+    herdr = bool(capabilities.get("herdr", {}).get("available"))
     if requested == "orca":
         if not orca:
             raise WorkerError("Orca is unavailable here. Run inside Orca with its managed CLI available.")
@@ -315,35 +319,51 @@ def discover_backend(requested: str) -> str:
     raise WorkerError("No supported worker backend is usable. Start inside Orca or Herdr, or select one explicitly.")
 
 
-def capability_report() -> dict[str, dict[str, Any]]:
-    orca_command = orca_cli_command()
-    orca_available = False
-    orca_reason = "requires the version-matched Orca CLI and a ready runtime"
-    if orca_command:
-        result = run([orca_command, "status", "--json"])
-        try:
-            status = json.loads(result.stdout) if result.returncode == 0 else {}
-        except json.JSONDecodeError:
-            status = {}
-        orca_available = bool(status.get("ok") and nested(status, "reachable") is True)
-        orca_reason = "Orca runtime is ready" if orca_available else "Orca CLI is present, but its runtime is not ready"
-    herdr_context = os.environ.get("HERDR_ENV") == "1" and shutil.which("herdr") is not None
-    herdr_available = False
-    herdr_reason = "requires HERDR_ENV=1 and the herdr CLI"
-    if herdr_context:
-        result = run(["herdr", "status"])
-        herdr_available = result.returncode == 0
-        herdr_reason = "Herdr-managed pane and CLI found" if herdr_available else "Herdr context exists, but its session is not ready"
-    return {
-        "orca": {
-            "available": orca_available,
-            "reason": orca_reason,
-        },
-        "herdr": {
-            "available": herdr_available,
-            "reason": herdr_reason,
-        },
-    }
+def capability_report(only: str | None = None) -> dict[str, dict[str, Any]]:
+    """Report backend availability. `only` skips the other probe; omit it for both."""
+    report: dict[str, dict[str, Any]] = {}
+    if only in (None, "auto", "orca"):
+        orca_command = orca_cli_command()
+        orca_available = False
+        orca_reason = "requires the version-matched Orca CLI and a ready runtime"
+        if orca_command:
+            result = run([orca_command, "status", "--json"])
+            try:
+                status = json.loads(result.stdout) if result.returncode == 0 else {}
+            except json.JSONDecodeError:
+                status = {}
+            orca_available = bool(status.get("ok") and nested(status, "reachable") is True)
+            orca_reason = "Orca runtime is ready" if orca_available else "Orca CLI is present, but its runtime is not ready"
+        report["orca"] = {"available": orca_available, "reason": orca_reason}
+    if only in (None, "auto", "herdr"):
+        herdr_context = os.environ.get("HERDR_ENV") == "1" and shutil.which("herdr") is not None
+        herdr_available = False
+        herdr_reason = "requires HERDR_ENV=1 and the herdr CLI"
+        if herdr_context:
+            result = run(["herdr", "status"])
+            herdr_available = result.returncode == 0
+            herdr_reason = "Herdr-managed pane and CLI found" if herdr_available else "Herdr context exists, but its session is not ready"
+        report["herdr"] = {"available": herdr_available, "reason": herdr_reason}
+    return report
+
+
+def measure_stage(name: str, action, stages: list[dict[str, Any]] | None = None):
+    """Time one startup step. Progress is stderr-only; the record stores name, ms, and ok."""
+    started = time.monotonic()
+    print(f"brigade: {name} start", file=sys.stderr, flush=True)
+    try:
+        result = action()
+    except Exception as error:
+        elapsed = int((time.monotonic() - started) * 1000)
+        if stages is not None:
+            stages.append({"stage": name, "ms": elapsed, "ok": False, "error": type(error).__name__})
+        print(f"brigade: {name} failed {elapsed}ms", file=sys.stderr, flush=True)
+        raise
+    elapsed = int((time.monotonic() - started) * 1000)
+    if stages is not None:
+        stages.append({"stage": name, "ms": elapsed, "ok": True})
+    print(f"brigade: {name} done {elapsed}ms", file=sys.stderr, flush=True)
+    return result
 
 
 def nested(value: Any, *names: str) -> Any:
@@ -542,14 +562,20 @@ class OrcaBackend(Backend):
 
     def launch(self, worker: dict[str, Any], worktree_mode: str, persist=None) -> LaunchResult:
         config = worker["configuration"]
-        run_response = self.call(["orchestration", "run-current"], "Inspect Orca run")
-        run = named_object(run_response, "run")
-        if not run or not isinstance(run.get("id"), str):
-            run_response = self.call(["orchestration", "run-create", "--objective", f"Brigade worker: {worker['task']['title']}"], "Create Orca run")
+        stages = worker.setdefault("startup_stages", [])
+
+        def resolve_run():
+            run_response = self.call(["orchestration", "run-current"], "Inspect Orca run")
             run = named_object(run_response, "run")
-        run_id = run.get("id") if run else None
-        if not isinstance(run_id, str):
-            raise WorkerError(f"Orca did not return a durable Run identifier. Response: {json.dumps(run_response)[:300]}")
+            if not run or not isinstance(run.get("id"), str):
+                run_response = self.call(["orchestration", "run-create", "--objective", f"Brigade worker: {worker['task']['title']}"], "Create Orca run")
+                run = named_object(run_response, "run")
+            run_id = run.get("id") if run else None
+            if not isinstance(run_id, str):
+                raise WorkerError(f"Orca did not return a durable Run identifier. Response: {json.dumps(run_response)[:300]}")
+            return run_id
+
+        run_id = measure_stage("resolve_run", resolve_run, stages)
         worker["backend_session"] = {"run_id": run_id}
         if persist:
             persist()
@@ -558,7 +584,7 @@ class OrcaBackend(Backend):
         elif worker["worktree"]["kind"] == "current":
             selected_worktree = "current"
         else:
-            selected_worktree = self.existing_worktree_selector(worker["worktree"]["path"])
+            selected_worktree = measure_stage("resolve_worktree", lambda: self.existing_worktree_selector(worker["worktree"]["path"]), stages)
         arguments = [
             "orchestration", "worker-start", "--spec", worker["brief"], "--task-title", worker["task"]["title"],
             "--worktree", selected_worktree, "--run", run_id,
@@ -569,7 +595,7 @@ class OrcaBackend(Backend):
         if worktree_mode == "new":
             arguments.extend(["--name", f"brigade-{worker['id'].removeprefix('w_')}"])
         try:
-            response = self.call(arguments, "Launch Orca worker")
+            response = measure_stage("start_worker", lambda: self.call(arguments, "Launch Orca worker"), stages)
         except BackendCallError as error:
             raise LaunchRejected(str(error), resources_may_exist=orca_failure_may_have_resources(error.payload)) from error
         dispatch = named_object(response, "dispatch")

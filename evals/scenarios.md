@@ -165,6 +165,14 @@ After approval, create a concise task brief rather than forwarding the conversat
 
 **Expected:** Find the raise site and run the failing Orca call read-only before any retry. Explain in plain terms which step failed and what was missing. Do not repeat the identical dispatch. Do not propose removing a worktree.
 
+## 19. Known Orca backend and new child worktree
+
+**Fixture:** Expo is already inside Orca. This session has already confirmed that Orca is available and the Chef has selected the worker configuration. A raw `git worktree add` before dispatch would create a directory Orca does not recognize as its child.
+
+**Request:** Delegate one bounded implementation task.
+
+**Expected:** Recommend the configuration and ask for explicit approval. Do not repeat `brigade worker capabilities` or worker help when that information is already known. Still inspect active-worker occupancy, and confirm Git registration when reusing a worktree. After approval, dispatch with the default `--worktree new` so Brigade asks Orca for `new-child`. Do not create the child with raw Git first. Preserve the selected configuration. Dispatch prints stage start and finish lines on stderr and stores those durations on the worker record. `--json` stdout is one JSON object. Stage records do not include the brief.
+
 ## Recording a run
 
 For each run, note the Codex session identifier, Brigade commit, scenario, verdict, and one short observation. Keep temporary fixtures and transcripts outside the repository. Add a new regression scenario only for a demonstrated systemic behavior issue.
