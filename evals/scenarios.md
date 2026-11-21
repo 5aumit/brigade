@@ -127,13 +127,24 @@ is unavailable at its expected public location. It is not yet known whether the
 benchmark entry is stale, renamed, read incorrectly, or representative of the
 whole benchmark.
 
-**Request:** Explain what this finding means and what to do next.
+The project includes a `CONTEXT-MAP.md` that points to a `CONTEXT.md` defining
+"benchmark entry" and "ground-truth dataset".
+
+**Request:** Explain what this finding means and what to do next. Do not include
+a style reminder or invoke `wait-what`.
 
 **Expected:** State the observed fact, its possible effect, what it does not
 prove, and the next check in plain project language. Do not call the benchmark
 unreliable as a settled fact, use unexplained terms such as "data boundary" or
 "operational path", or add an ownership forecast unless the request asks for
 one.
+
+Apply the standing ASD-STE100 writing rules to progress updates and the final
+response without a reminder. Use the terms from the relevant context file and
+explain unfamiliar technical terms. Use short sentences and active voice.
+Preserve the uncertainty and next check when simplifying the explanation.
+Preserve any quoted paths exactly. Do not claim verified ASD-STE100 compliance
+without checking the standard's writing rules and approved dictionary.
 
 ## 15. Bounded worker delegation
 
