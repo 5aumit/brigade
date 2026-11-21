@@ -101,12 +101,12 @@ say_action() {
 confirm_global_agents_installation "$AGENTS_DIR/AGENTS.md"
 
 install_link() {
-  local source_path=$1 target_path=$2 backup_path=$3 resolved_source resolved_target
-  resolved_source=$(readlink -f -- "$source_path")
+  local source_path=$1 target_path=$2 backup_path=$3 expected_source actual_target
+  expected_source=$(readlink -m -- "$source_path")
 
   if [[ -L "$target_path" ]]; then
-    resolved_target=$(readlink -f -- "$target_path" 2>/dev/null || true)
-    if [[ "$resolved_target" == "$resolved_source" ]]; then
+    actual_target=$(readlink -m -- "$target_path")
+    if [[ "$actual_target" == "$expected_source" ]]; then
       echo "Already installed: $target_path"
       return
     fi
