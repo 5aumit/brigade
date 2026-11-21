@@ -28,7 +28,7 @@ Suggested worker:
 Reason: Localized implementation with straightforward verification.
 ```
 
-Expo recommends. The Chef may accept, override the backend, harness, model, or reasoning, or decline delegation. Supported harnesses are `codex` and `cursor`. A Cursor worker needs a Cursor model id, such as `composer-2.5`. Herdr starts it with `--kind cursor`. Orca receives `--agent cursor`. A recommendation, a DELEGATE ownership label, a route result, or backend availability never authorizes dispatch.
+Expo recommends. The Chef may accept, override the backend, harness, model, or reasoning, or decline delegation. Supported harnesses are `codex`, `cursor`, and `claude`. A Cursor worker needs a Cursor model id, such as `composer-2.5`. Herdr starts it with `--kind cursor` or `--kind claude`. Orca receives `--agent cursor` or `--agent claude`. A recommendation, a DELEGATE ownership label, a route result, or backend availability never authorizes dispatch.
 
 Ask the Chef for explicit permission for every dispatch. After approval, preserve the exact selected configuration in the worker record. Do not silently replace a requested configuration when a backend cannot honor it. Surface the limitation instead.
 

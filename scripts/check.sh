@@ -82,16 +82,20 @@ esac
 trap 'rm -rf -- "$CHECK_TMP"' EXIT
 
 TEST_AGENTS_DIR="$CHECK_TMP/upgrade-agents"
+TEST_CLAUDE_DIR="$CHECK_TMP/upgrade-claude"
 TEST_BIN_DIR="$CHECK_TMP/bin"
 
 EMPTY_AGENTS_DIR="$CHECK_TMP/empty-agents"
+EMPTY_CLAUDE_DIR="$CHECK_TMP/empty-claude"
 FRESH_BIN_DIR="$CHECK_TMP/fresh-bin"
-if bash "$STACK_REPO/scripts/install.sh" --agents-dir "$EMPTY_AGENTS_DIR" --bin-dir "$FRESH_BIN_DIR" >/dev/null 2>&1; then
+if bash "$STACK_REPO/scripts/install.sh" --agents-dir "$EMPTY_AGENTS_DIR" --claude-dir "$EMPTY_CLAUDE_DIR" --bin-dir "$FRESH_BIN_DIR" >/dev/null 2>&1; then
   fail "installer created AGENTS.md without confirmation"
 fi
 [[ ! -e "$EMPTY_AGENTS_DIR/AGENTS.md" && ! -L "$EMPTY_AGENTS_DIR/AGENTS.md" ]] || fail "installer changed empty agents directory without confirmation"
-bash "$STACK_REPO/scripts/install.sh" --yes --agents-dir "$EMPTY_AGENTS_DIR" --bin-dir "$FRESH_BIN_DIR" >/dev/null
+[[ ! -e "$EMPTY_CLAUDE_DIR/CLAUDE.md" && ! -L "$EMPTY_CLAUDE_DIR/CLAUDE.md" ]] || fail "installer changed empty Claude directory without confirmation"
+bash "$STACK_REPO/scripts/install.sh" --yes --agents-dir "$EMPTY_AGENTS_DIR" --claude-dir "$EMPTY_CLAUDE_DIR" --bin-dir "$FRESH_BIN_DIR" >/dev/null
 [[ -L "$EMPTY_AGENTS_DIR/AGENTS.md" ]] || fail "installer did not create AGENTS.md with explicit approval"
+[[ -L "$EMPTY_CLAUDE_DIR/CLAUDE.md" ]] || fail "installer did not create CLAUDE.md with explicit approval"
 [[ -L "$EMPTY_AGENTS_DIR/brigade" ]] || fail "installer did not link the Brigade repository"
 [[ -L "$FRESH_BIN_DIR/brigade" ]] || fail "installer did not link the Brigade command"
 [[ -L "$FRESH_BIN_DIR/5stack" ]] || fail "installer did not link the legacy 5stack command"
@@ -102,17 +106,21 @@ printf '{"version": 1, "workers": [{"id": "w_legacy"}]}\n' > "$CHECK_TMP/legacy-
 XDG_STATE_HOME="$CHECK_TMP/legacy-state" "$FRESH_BIN_DIR/brigade" worker list --all --json | grep -q 'w_legacy' || fail "Brigade did not retain legacy worker history"
 
 mkdir -p "$TEST_BIN_DIR" "$TEST_AGENTS_DIR/skills" "$TEST_AGENTS_DIR/5stack-backups/v1/skills" "$TEST_AGENTS_DIR/5stack-backups/v1/bin"
+mkdir -p "$TEST_CLAUDE_DIR/skills"
 printf 'original global instructions\n' > "$TEST_AGENTS_DIR/5stack-backups/v1/AGENTS.md"
 printf 'original old root\n' > "$TEST_AGENTS_DIR/5stack-backups/v1/root"
 printf 'original feedback skill\n' > "$TEST_AGENTS_DIR/5stack-backups/v1/skills/give-5stack-feedback"
 printf 'original 5stack command\n' > "$TEST_AGENTS_DIR/5stack-backups/v1/bin/5stack"
 ln -s "$STACK_REPO/AGENTS.md" "$TEST_AGENTS_DIR/AGENTS.md"
+printf 'original Claude instructions\n' > "$TEST_CLAUDE_DIR/CLAUDE.md"
 ln -s "$STACK_REPO" "$TEST_AGENTS_DIR/5stack"
 ln -s "$STACK_REPO/skills/give-5stack-feedback" "$TEST_AGENTS_DIR/skills/give-5stack-feedback"
 ln -s "$STACK_REPO/bin/5stack" "$TEST_BIN_DIR/5stack"
 
-bash "$STACK_REPO/scripts/install.sh" --agents-dir "$TEST_AGENTS_DIR" --bin-dir "$TEST_BIN_DIR" >/dev/null
+bash "$STACK_REPO/scripts/install.sh" --yes --agents-dir "$TEST_AGENTS_DIR" --claude-dir "$TEST_CLAUDE_DIR" --bin-dir "$TEST_BIN_DIR" >/dev/null
 [[ -L "$TEST_AGENTS_DIR/AGENTS.md" ]] || fail "installer did not link AGENTS.md"
+[[ -L "$TEST_CLAUDE_DIR/CLAUDE.md" ]] || fail "installer did not link CLAUDE.md"
+grep -q 'original Claude instructions' "$TEST_CLAUDE_DIR/brigade-backups/v1/CLAUDE.md" || fail "installer did not back up Claude instructions"
 [[ -L "$TEST_AGENTS_DIR/brigade" ]] || fail "installer did not link the Brigade repository"
 [[ -f "$TEST_AGENTS_DIR/5stack" ]] || fail "installer did not restore legacy root backup"
 grep -q 'original old root' "$TEST_AGENTS_DIR/5stack" || fail "installer restored wrong legacy root backup"
@@ -122,18 +130,22 @@ grep -q 'original feedback skill' "$TEST_AGENTS_DIR/skills/give-5stack-feedback"
 [[ -L "$TEST_BIN_DIR/5stack" ]] || fail "installer did not link the 5stack command"
 for skill in "${OWNED_SKILLS[@]}"; do
   [[ -L "$TEST_AGENTS_DIR/skills/$skill" ]] || fail "installer did not link $skill"
+  [[ -L "$TEST_CLAUDE_DIR/skills/$skill" ]] || fail "installer did not link Claude skill $skill"
 done
 
-bash "$STACK_REPO/scripts/uninstall.sh" --agents-dir "$TEST_AGENTS_DIR" --bin-dir "$TEST_BIN_DIR" >/dev/null
+bash "$STACK_REPO/scripts/uninstall.sh" --agents-dir "$TEST_AGENTS_DIR" --claude-dir "$TEST_CLAUDE_DIR" --bin-dir "$TEST_BIN_DIR" >/dev/null
 [[ -f "$TEST_AGENTS_DIR/AGENTS.md" ]] || fail "uninstaller did not restore AGENTS.md"
+[[ -f "$TEST_CLAUDE_DIR/CLAUDE.md" ]] || fail "uninstaller did not restore CLAUDE.md"
 [[ ! -e "$TEST_AGENTS_DIR/brigade" && ! -L "$TEST_AGENTS_DIR/brigade" ]] || fail "uninstaller left the Brigade repository link"
 [[ -f "$TEST_AGENTS_DIR/5stack" ]] || fail "uninstaller removed restored legacy root"
 [[ ! -e "$TEST_BIN_DIR/brigade" && ! -L "$TEST_BIN_DIR/brigade" ]] || fail "uninstaller left the Brigade command"
 [[ -f "$TEST_BIN_DIR/5stack" ]] || fail "uninstaller did not restore legacy 5stack command"
 for skill in "${OWNED_SKILLS[@]}"; do
   [[ ! -e "$TEST_AGENTS_DIR/skills/$skill" && ! -L "$TEST_AGENTS_DIR/skills/$skill" ]] || fail "uninstaller left $skill"
+  [[ ! -e "$TEST_CLAUDE_DIR/skills/$skill" && ! -L "$TEST_CLAUDE_DIR/skills/$skill" ]] || fail "uninstaller left Claude skill $skill"
 done
 grep -q 'original global instructions' "$TEST_AGENTS_DIR/AGENTS.md" || fail "wrong AGENTS.md restored"
+grep -q 'original Claude instructions' "$TEST_CLAUDE_DIR/CLAUDE.md" || fail "wrong CLAUDE.md restored"
 grep -q 'original feedback skill' "$TEST_AGENTS_DIR/skills/give-5stack-feedback" || fail "uninstaller changed restored legacy feedback backup"
 grep -q 'original 5stack command' "$TEST_BIN_DIR/5stack" || fail "uninstaller restored wrong 5stack command backup"
 

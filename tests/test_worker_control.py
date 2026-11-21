@@ -73,8 +73,8 @@ class WorkerControlTests(unittest.TestCase):
         cursor = control.resolved_configuration("orca", "cursor", "composer-2.5", "low", None)
         self.assertEqual(cursor["harness"], "cursor")
         self.assertEqual(cursor["model"], "composer-2.5")
-        with self.assertRaisesRegex(control.WorkerError, "not supported"):
-            control.resolved_configuration("orca", "claude", "opus", "medium", None)
+        claude = control.resolved_configuration("orca", "claude", "opus", "medium", None)
+        self.assertEqual(claude["harness"], "claude")
 
     def test_herdr_cursor_start_uses_cursor_kind(self):
         tail = control.herdr_agent_start_tail({"harness": "cursor", "model": "composer-2.5", "reasoning": "low"})
@@ -82,6 +82,20 @@ class WorkerControlTests(unittest.TestCase):
         codex = control.herdr_agent_start_tail({"model": "gpt-5.6-luna", "reasoning": "medium"})
         self.assertEqual(codex[:2], ["--kind", "codex"])
         self.assertIn("model_reasoning_effort", " ".join(codex))
+
+    def test_worker_title_slug(self):
+        self.assertEqual(control.worker_title_slug("Add Claude Code support"), "add-claude-code-support")
+        self.assertEqual(control.worker_title_slug("Fix: parser / path!"), "fix-parser-path")
+        self.assertEqual(control.worker_title_slug("one two three four five six seven eight nine ten eleven"), "one-two-three-four-five-six-seven")
+        self.assertEqual(control.worker_title_slug("!!!"), "task")
+        self.assertEqual(control.worker_title_slug("Über Café"), "ber-caf")
+
+    def test_worker_name_uses_six_hex_id_suffix(self):
+        self.assertEqual(control.worker_name("Add Claude Code support", "w_64fb2a18ccda"), "add-claude-code-support-64fb2a")
+
+    def test_herdr_claude_start_uses_claude_kind_and_effort(self):
+        claude = control.herdr_agent_start_tail({"harness": "claude", "model": "opus", "reasoning": "high"})
+        self.assertEqual(claude, ["--kind", "claude", "--", "--model", "opus", "--effort", "high"])
 
     def test_capabilities_are_optional(self):
         original = {key: os.environ.get(key) for key in ("ORCA_CLI_COMMAND", "ORCA_TERMINAL_HANDLE", "HERDR_ENV")}
@@ -149,6 +163,8 @@ class WorkerControlTests(unittest.TestCase):
         self.assertIn("--run", calls[-1])
         self.assertIn("run_123", calls[-1])
         self.assertIn("--effort", calls[-1])
+        self.assertNotIn("--name", calls[-1])
+        self.assertNotIn("--display-name", calls[-1])
 
     def test_orca_orchestration_calls_request_full_record(self):
         backend = control.OrcaBackend()
@@ -176,6 +192,23 @@ class WorkerControlTests(unittest.TestCase):
         self.assertEqual(calls[-1][calls[-1].index("--agent") + 1], "cursor")
         self.assertNotIn("--effort", calls[-1])
 
+    def test_orca_claude_launch_passes_effort(self):
+        worker = {
+            "id": "w_claude", "brief": "read only", "task": {"title": "Read install commands"},
+            "configuration": {"harness": "claude", "model": "opus", "reasoning": "high"},
+            "worktree": {"path": "/repo", "kind": "current"},
+        }
+        backend = control.OrcaBackend()
+        calls = []
+        replies = iter([
+            {"ok": True, "result": {"run": {"id": "run_123"}}},
+            {"ok": True, "result": {"dispatch": {"id": "dispatch_123"}, "task": {"id": "task_123"}, "worktree": {"path": "/repo"}, "launch": {"effective": {"model": "opus", "effort": "high"}}}},
+        ])
+        backend.call = lambda arguments, _description: calls.append(arguments) or next(replies)
+        backend.launch(worker, "current")
+        self.assertEqual(calls[-1][calls[-1].index("--agent") + 1], "claude")
+        self.assertEqual(calls[-1][calls[-1].index("--effort") + 1], "high")
+
     def test_orca_new_child_has_deterministic_name(self):
         worker = {
             "id": "w_abc123", "brief": "bounded brief", "task": {"title": "Test worker"},
@@ -186,12 +219,14 @@ class WorkerControlTests(unittest.TestCase):
         calls = []
         replies = iter([
             {"ok": True, "result": {"run": {"id": "run_123"}}},
-            {"ok": True, "result": {"dispatch": {"id": "dispatch_123"}, "launch": {"effective": {"model": "gpt-5.6-luna", "effort": "medium"}}}},
+            {"ok": True, "result": {"dispatch": {"id": "dispatch_123"}, "checkoutPath": "/repo/new-child", "launch": {"effective": {"model": "gpt-5.6-luna", "effort": "medium"}}}},
         ])
         backend.call = lambda arguments, _description: calls.append(arguments) or next(replies)
-        backend.launch(worker, "new")
+        result = backend.launch(worker, "new")
         self.assertIn("new-child", calls[-1])
-        self.assertEqual(calls[-1][calls[-1].index("--name") + 1], "brigade-abc123")
+        self.assertEqual(calls[-1][calls[-1].index("--name") + 1], "test-worker-abc123")
+        self.assertEqual(calls[-1][calls[-1].index("--display-name") + 1], "Test worker")
+        self.assertEqual(result.worktree, "/repo/new-child")
 
     def test_orca_existing_worktree_uses_identity_from_its_directory(self):
         backend = control.OrcaBackend()
@@ -695,8 +730,10 @@ class WorkerControlTests(unittest.TestCase):
             "startup_stages": [],
         }
         backend = control.OrcaBackend()
+        calls = []
 
         def call(arguments, _description, cwd=None):
+            calls.append(arguments)
             if arguments[1] == "run-current":
                 return {"result": {"run": {"id": "run_1"}}}
             if arguments[:2] == ["worktree", "current"]:
@@ -715,6 +752,9 @@ class WorkerControlTests(unittest.TestCase):
         self.assertIn("start_worker done", stderr.getvalue())
         self.assertNotIn("token-secret-brief", stderr.getvalue())
         self.assertNotIn("token-secret-brief", json.dumps(worker["startup_stages"]))
+        launch_arguments = next(arguments for arguments in calls if arguments[1] == "worker-start")
+        self.assertNotIn("--name", launch_arguments)
+        self.assertNotIn("--display-name", launch_arguments)
 
     def test_orca_start_failure_records_the_stage_and_reraises(self):
         worker = {
