@@ -278,6 +278,18 @@ def herdr_agent_start_tail(config: dict[str, Any]) -> list[str]:
     raise WorkerError(f"Harness is not supported in v0: {harness}")
 
 
+def worker_title_slug(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    if len(slug) <= 40:
+        return slug or "task"
+    cut = slug[:40].rstrip("-")
+    return cut.rsplit("-", 1)[0] or cut or "task"
+
+
+def worker_name(title: str, worker_id: str) -> str:
+    return f"{worker_title_slug(title)}-{worker_id.removeprefix('w_')[:6]}"
+
+
 def orca_cli_command() -> str | None:
     """Follow Orca's version-matched CLI resolution without using Linux `orca`."""
     configured = os.environ.get("ORCA_CLI_COMMAND")
@@ -593,7 +605,7 @@ class OrcaBackend(Backend):
         if config["harness"] != "cursor":
             arguments.extend(["--effort", config["reasoning"]])
         if worktree_mode == "new":
-            arguments.extend(["--name", f"brigade-{worker['id'].removeprefix('w_')}"])
+            arguments.extend(["--name", worker_name(worker["task"]["title"], worker["id"]), "--display-name", worker["task"]["title"]])
         try:
             response = measure_stage("start_worker", lambda: self.call(arguments, "Launch Orca worker"), stages)
         except BackendCallError as error:
@@ -603,7 +615,7 @@ class OrcaBackend(Backend):
         if not dispatch_id:
             raise WorkerError("Orca did not return a dispatch identifier")
         worktree = named_object(response, "worktree")
-        actual_worktree = text_value(response, "worktreePath") or (worktree or {}).get("path") or worker["worktree"]["path"]
+        actual_worktree = text_value(response, "worktreePath", "checkoutPath") or (worktree or {}).get("path") or worker["worktree"]["path"]
         terminal_id = text_value(response, "terminalHandle", "agentTerminalHandle", "terminal_id")
         task = named_object(response, "task")
         task_id = (task or {}).get("id")
@@ -737,8 +749,7 @@ class HerdrBackend(Backend):
             pane_id = text_value(created.get("result", {}).get("root_pane", {}), "pane_id")
         if not tab_id or not pane_id:
             raise WorkerError("Herdr did not return tab and pane identifiers")
-        title = re.sub(r"[^a-z0-9]+", "-", worker["task"]["title"].lower()).strip("-") or "task"
-        name = f"w-{title[:16].rstrip('-')}-{worker['id'].removeprefix('w_')[:12]}"
+        name = f"w-{worker_name(worker['task']['title'], worker['id'])}"
         worker["backend_session"] = {"agent_name": name, "tab_id": tab_id, "pane_id": pane_id, "agent_started": False, "agent_start_attempted": False}
         if persist:
             persist()

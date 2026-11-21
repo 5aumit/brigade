@@ -83,6 +83,16 @@ class WorkerControlTests(unittest.TestCase):
         self.assertEqual(codex[:2], ["--kind", "codex"])
         self.assertIn("model_reasoning_effort", " ".join(codex))
 
+    def test_worker_title_slug(self):
+        self.assertEqual(control.worker_title_slug("Add Claude Code support"), "add-claude-code-support")
+        self.assertEqual(control.worker_title_slug("Fix: parser / path!"), "fix-parser-path")
+        self.assertEqual(control.worker_title_slug("one two three four five six seven eight nine ten eleven"), "one-two-three-four-five-six-seven")
+        self.assertEqual(control.worker_title_slug("!!!"), "task")
+        self.assertEqual(control.worker_title_slug("Über Café"), "ber-caf")
+
+    def test_worker_name_uses_six_hex_id_suffix(self):
+        self.assertEqual(control.worker_name("Add Claude Code support", "w_64fb2a18ccda"), "add-claude-code-support-64fb2a")
+
     def test_capabilities_are_optional(self):
         original = {key: os.environ.get(key) for key in ("ORCA_CLI_COMMAND", "ORCA_TERMINAL_HANDLE", "HERDR_ENV")}
         original_orca_command = control.orca_cli_command
@@ -149,6 +159,8 @@ class WorkerControlTests(unittest.TestCase):
         self.assertIn("--run", calls[-1])
         self.assertIn("run_123", calls[-1])
         self.assertIn("--effort", calls[-1])
+        self.assertNotIn("--name", calls[-1])
+        self.assertNotIn("--display-name", calls[-1])
 
     def test_orca_orchestration_calls_request_full_record(self):
         backend = control.OrcaBackend()
@@ -186,12 +198,14 @@ class WorkerControlTests(unittest.TestCase):
         calls = []
         replies = iter([
             {"ok": True, "result": {"run": {"id": "run_123"}}},
-            {"ok": True, "result": {"dispatch": {"id": "dispatch_123"}, "launch": {"effective": {"model": "gpt-5.6-luna", "effort": "medium"}}}},
+            {"ok": True, "result": {"dispatch": {"id": "dispatch_123"}, "checkoutPath": "/repo/new-child", "launch": {"effective": {"model": "gpt-5.6-luna", "effort": "medium"}}}},
         ])
         backend.call = lambda arguments, _description: calls.append(arguments) or next(replies)
-        backend.launch(worker, "new")
+        result = backend.launch(worker, "new")
         self.assertIn("new-child", calls[-1])
-        self.assertEqual(calls[-1][calls[-1].index("--name") + 1], "brigade-abc123")
+        self.assertEqual(calls[-1][calls[-1].index("--name") + 1], "test-worker-abc123")
+        self.assertEqual(calls[-1][calls[-1].index("--display-name") + 1], "Test worker")
+        self.assertEqual(result.worktree, "/repo/new-child")
 
     def test_orca_existing_worktree_uses_identity_from_its_directory(self):
         backend = control.OrcaBackend()
@@ -695,8 +709,10 @@ class WorkerControlTests(unittest.TestCase):
             "startup_stages": [],
         }
         backend = control.OrcaBackend()
+        calls = []
 
         def call(arguments, _description, cwd=None):
+            calls.append(arguments)
             if arguments[1] == "run-current":
                 return {"result": {"run": {"id": "run_1"}}}
             if arguments[:2] == ["worktree", "current"]:
@@ -715,6 +731,9 @@ class WorkerControlTests(unittest.TestCase):
         self.assertIn("start_worker done", stderr.getvalue())
         self.assertNotIn("token-secret-brief", stderr.getvalue())
         self.assertNotIn("token-secret-brief", json.dumps(worker["startup_stages"]))
+        launch_arguments = next(arguments for arguments in calls if arguments[1] == "worker-start")
+        self.assertNotIn("--name", launch_arguments)
+        self.assertNotIn("--display-name", launch_arguments)
 
     def test_orca_start_failure_records_the_stage_and_reraises(self):
         worker = {
