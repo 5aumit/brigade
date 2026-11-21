@@ -73,8 +73,8 @@ class WorkerControlTests(unittest.TestCase):
         cursor = control.resolved_configuration("orca", "cursor", "composer-2.5", "low", None)
         self.assertEqual(cursor["harness"], "cursor")
         self.assertEqual(cursor["model"], "composer-2.5")
-        with self.assertRaisesRegex(control.WorkerError, "not supported"):
-            control.resolved_configuration("orca", "claude", "opus", "medium", None)
+        claude = control.resolved_configuration("orca", "claude", "opus", "medium", None)
+        self.assertEqual(claude["harness"], "claude")
 
     def test_herdr_cursor_start_uses_cursor_kind(self):
         tail = control.herdr_agent_start_tail({"harness": "cursor", "model": "composer-2.5", "reasoning": "low"})
@@ -92,6 +92,10 @@ class WorkerControlTests(unittest.TestCase):
 
     def test_worker_name_uses_six_hex_id_suffix(self):
         self.assertEqual(control.worker_name("Add Claude Code support", "w_64fb2a18ccda"), "add-claude-code-support-64fb2a")
+
+    def test_herdr_claude_start_uses_claude_kind_and_effort(self):
+        claude = control.herdr_agent_start_tail({"harness": "claude", "model": "opus", "reasoning": "high"})
+        self.assertEqual(claude, ["--kind", "claude", "--", "--model", "opus", "--effort", "high"])
 
     def test_capabilities_are_optional(self):
         original = {key: os.environ.get(key) for key in ("ORCA_CLI_COMMAND", "ORCA_TERMINAL_HANDLE", "HERDR_ENV")}
@@ -187,6 +191,23 @@ class WorkerControlTests(unittest.TestCase):
         backend.launch(worker, "current")
         self.assertEqual(calls[-1][calls[-1].index("--agent") + 1], "cursor")
         self.assertNotIn("--effort", calls[-1])
+
+    def test_orca_claude_launch_passes_effort(self):
+        worker = {
+            "id": "w_claude", "brief": "read only", "task": {"title": "Read install commands"},
+            "configuration": {"harness": "claude", "model": "opus", "reasoning": "high"},
+            "worktree": {"path": "/repo", "kind": "current"},
+        }
+        backend = control.OrcaBackend()
+        calls = []
+        replies = iter([
+            {"ok": True, "result": {"run": {"id": "run_123"}}},
+            {"ok": True, "result": {"dispatch": {"id": "dispatch_123"}, "task": {"id": "task_123"}, "worktree": {"path": "/repo"}, "launch": {"effective": {"model": "opus", "effort": "high"}}}},
+        ])
+        backend.call = lambda arguments, _description: calls.append(arguments) or next(replies)
+        backend.launch(worker, "current")
+        self.assertEqual(calls[-1][calls[-1].index("--agent") + 1], "claude")
+        self.assertEqual(calls[-1][calls[-1].index("--effort") + 1], "high")
 
     def test_orca_new_child_has_deterministic_name(self):
         worker = {

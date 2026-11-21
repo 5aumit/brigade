@@ -4,12 +4,13 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 STACK_REPO=$(dirname -- "$SCRIPT_DIR")
 AGENTS_DIR="${HOME}/.agents"
+CLAUDE_DIR="${HOME}/.claude"
 BIN_DIR="${HOME}/.local/bin"
 DRY_RUN=0
 ASSUME_YES=0
 
 usage() {
-  echo "Usage: $0 [--dry-run] [--yes] [--agents-dir PATH] [--bin-dir PATH]"
+  echo "Usage: $0 [--dry-run] [--yes] [--agents-dir PATH] [--claude-dir PATH] [--bin-dir PATH]"
 }
 
 while (($#)); do
@@ -25,6 +26,11 @@ while (($#)); do
     --agents-dir)
       [[ $# -ge 2 ]] || { usage >&2; exit 2; }
       AGENTS_DIR=$2
+      shift 2
+      ;;
+    --claude-dir)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      CLAUDE_DIR=$2
       shift 2
       ;;
     --bin-dir)
@@ -47,8 +53,10 @@ git -C "$STACK_REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "
 [[ -f "$STACK_REPO/AGENTS.md" ]] || { echo "Missing $STACK_REPO/AGENTS.md" >&2; exit 1; }
 
 BACKUP_DIR="$AGENTS_DIR/brigade-backups/v1"
+CLAUDE_BACKUP_DIR="$CLAUDE_DIR/brigade-backups/v1"
 LEGACY_BACKUP_DIR="$AGENTS_DIR/5stack-backups/v1"
 SKILLS_DIR="$AGENTS_DIR/skills"
+CLAUDE_SKILLS_DIR="$CLAUDE_DIR/skills"
 ROOT_LINK="$AGENTS_DIR/brigade"
 BIN_LINK="$BIN_DIR/brigade"
 LEGACY_ROOT_LINK="$AGENTS_DIR/5stack"
@@ -56,9 +64,9 @@ LEGACY_BIN_LINK="$BIN_DIR/5stack"
 mapfile -t OWNED_SKILLS < "$STACK_REPO/skills/owned.txt"
 LEGACY_SKILLS=(5stack-setup feedback reflect give-5stack-feedback reflect-5stack review-5stack-feedback)
 
-confirm_global_agents_installation() {
-  local target_path=$1 resolved_source resolved_target response has_existing=0
-  resolved_source=$(readlink -f -- "$STACK_REPO/AGENTS.md")
+confirm_global_installation() {
+  local target_path=$1 source_path=$2 backup_path=$3 resolved_source resolved_target response has_existing=0
+  resolved_source=$(readlink -f -- "$source_path")
 
   if [[ -L "$target_path" ]]; then
     resolved_target=$(readlink -f -- "$target_path" 2>/dev/null || true)
@@ -78,10 +86,10 @@ confirm_global_agents_installation() {
   }
 
   if ((has_existing)); then
-    echo "Brigade will replace $target_path with a symlink to $STACK_REPO/AGENTS.md."
-    echo "The current path will be moved to $BACKUP_DIR/AGENTS.md."
+    echo "Brigade will replace $target_path with a symlink to $source_path."
+    echo "The current path will be moved to $backup_path."
   else
-    echo "Brigade will create $target_path as a symlink to $STACK_REPO/AGENTS.md."
+    echo "Brigade will create $target_path as a symlink to $source_path."
   fi
   read -r -p "Continue? [y/N] " response
   [[ "$response" =~ ^[Yy]([Ee][Ss])?$ ]] || {
@@ -98,7 +106,8 @@ say_action() {
   fi
 }
 
-confirm_global_agents_installation "$AGENTS_DIR/AGENTS.md"
+confirm_global_installation "$AGENTS_DIR/AGENTS.md" "$STACK_REPO/AGENTS.md" "$BACKUP_DIR/AGENTS.md"
+confirm_global_installation "$CLAUDE_DIR/CLAUDE.md" "$STACK_REPO/AGENTS.md" "$CLAUDE_BACKUP_DIR/CLAUDE.md"
 
 install_link() {
   local source_path=$1 target_path=$2 backup_path=$3 expected_source actual_target
@@ -166,6 +175,7 @@ done
 
 install_link "$STACK_REPO" "$ROOT_LINK" "$BACKUP_DIR/root"
 install_link "$STACK_REPO/AGENTS.md" "$AGENTS_DIR/AGENTS.md" "$BACKUP_DIR/AGENTS.md"
+install_link "$STACK_REPO/AGENTS.md" "$CLAUDE_DIR/CLAUDE.md" "$CLAUDE_BACKUP_DIR/CLAUDE.md"
 install_link "$STACK_REPO/bin/brigade" "$BIN_LINK" "$BACKUP_DIR/bin/brigade"
 install_link "$STACK_REPO/bin/5stack" "$LEGACY_BIN_LINK" "$BACKUP_DIR/bin/5stack"
 
@@ -180,12 +190,19 @@ for skill in "${OWNED_SKILLS[@]}"; do
     "$BACKUP_DIR/skills/$skill"
 done
 
+for skill in "${OWNED_SKILLS[@]}"; do
+  install_link \
+    "$STACK_REPO/skills/$skill" \
+    "$CLAUDE_SKILLS_DIR/$skill" \
+    "$CLAUDE_BACKUP_DIR/skills/$skill"
+done
+
 migrate_legacy_link "$STACK_REPO" "$LEGACY_ROOT_LINK" "$LEGACY_BACKUP_DIR/root"
 
 if ((DRY_RUN)); then
   echo "Brigade installation dry run complete."
 else
-  echo "Brigade installation complete. Start a fresh Codex session to load it."
+  echo "Brigade installation complete. Start a fresh agent session to load it."
 fi
 echo "Backups, when needed: $BACKUP_DIR"
 if [[ -d "$LEGACY_BACKUP_DIR" ]]; then

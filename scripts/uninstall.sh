@@ -4,11 +4,12 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 STACK_REPO=$(dirname -- "$SCRIPT_DIR")
 AGENTS_DIR="${HOME}/.agents"
+CLAUDE_DIR="${HOME}/.claude"
 BIN_DIR="${HOME}/.local/bin"
 DRY_RUN=0
 
 usage() {
-  echo "Usage: $0 [--dry-run] [--agents-dir PATH] [--bin-dir PATH]"
+  echo "Usage: $0 [--dry-run] [--agents-dir PATH] [--claude-dir PATH] [--bin-dir PATH]"
 }
 
 while (($#)); do
@@ -20,6 +21,11 @@ while (($#)); do
     --agents-dir)
       [[ $# -ge 2 ]] || { usage >&2; exit 2; }
       AGENTS_DIR=$2
+      shift 2
+      ;;
+    --claude-dir)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      CLAUDE_DIR=$2
       shift 2
       ;;
     --bin-dir)
@@ -39,8 +45,10 @@ while (($#)); do
 done
 
 BACKUP_DIR="$AGENTS_DIR/brigade-backups/v1"
+CLAUDE_BACKUP_DIR="$CLAUDE_DIR/brigade-backups/v1"
 LEGACY_BACKUP_DIR="$AGENTS_DIR/5stack-backups/v1"
 SKILLS_DIR="$AGENTS_DIR/skills"
+CLAUDE_SKILLS_DIR="$CLAUDE_DIR/skills"
 ROOT_LINK="$AGENTS_DIR/brigade"
 BIN_LINK="$BIN_DIR/brigade"
 LEGACY_ROOT_LINK="$AGENTS_DIR/5stack"
@@ -116,6 +124,13 @@ for skill in "${OWNED_SKILLS[@]}"; do
     "$BACKUP_DIR/skills/$skill"
 done
 
+for skill in "${OWNED_SKILLS[@]}"; do
+  remove_owned_link \
+    "$STACK_REPO/skills/$skill" \
+    "$CLAUDE_SKILLS_DIR/$skill" \
+    "$CLAUDE_BACKUP_DIR/skills/$skill"
+done
+
 for skill in "${LEGACY_SKILLS[@]}"; do
   remove_legacy_link \
     "$STACK_REPO/skills/$skill" \
@@ -124,6 +139,7 @@ for skill in "${LEGACY_SKILLS[@]}"; do
 done
 
 remove_owned_link "$STACK_REPO/AGENTS.md" "$AGENTS_DIR/AGENTS.md" "$BACKUP_DIR/AGENTS.md"
+remove_owned_link "$STACK_REPO/AGENTS.md" "$CLAUDE_DIR/CLAUDE.md" "$CLAUDE_BACKUP_DIR/CLAUDE.md"
 remove_owned_link "$STACK_REPO" "$ROOT_LINK" "$BACKUP_DIR/root"
 remove_owned_link "$STACK_REPO/bin/brigade" "$BIN_LINK" "$BACKUP_DIR/bin/brigade"
 remove_owned_link "$STACK_REPO/bin/5stack" "$LEGACY_BIN_LINK" "$BACKUP_DIR/bin/5stack"

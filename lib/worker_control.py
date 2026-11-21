@@ -25,10 +25,10 @@ from typing import Any
 ACTIVE_STATUSES = {"active", "blocked", "stopping", "unverifiable"}
 TERMINAL_STATUSES = {"completed", "failed", "stopped", "disappeared"}
 REASONING_LEVELS = {"low", "medium", "high", "xhigh", "max", "ultra"}
-HARNESSES = {"codex", "cursor"}
+HARNESSES = {"codex", "cursor", "claude"}
 
 # Profiles are data, not backend behavior.  Add a model here without changing
-# worker lifecycle code.  Models use the identifiers accepted by the Codex CLI.
+# worker lifecycle code. Models use identifiers accepted by the selected harness.
 PROFILES = {
     "codex-luna-medium": {
         "harness": "codex", "model": "gpt-5.6-luna", "reasoning": "medium",
@@ -275,6 +275,8 @@ def herdr_agent_start_tail(config: dict[str, Any]) -> list[str]:
     if harness == "cursor":
         # Cursor model ids already name the variant. composer-2.5 rejects a separate effort.
         return ["--kind", "cursor", "--", "--model", config["model"]]
+    if harness == "claude":
+        return ["--kind", "claude", "--", "--model", config["model"], "--effort", config["reasoning"]]
     raise WorkerError(f"Harness is not supported in v0: {harness}")
 
 
