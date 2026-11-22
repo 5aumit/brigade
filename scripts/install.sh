@@ -6,12 +6,13 @@ STACK_REPO=$(dirname -- "$SCRIPT_DIR")
 AGENTS_DIR="${HOME}/.agents"
 CLAUDE_DIR="${HOME}/.claude"
 ANTIGRAVITY_DIR="${HOME}/.gemini/config"
+T3_DIR="${HOME}/.t3/userdata"
 BIN_DIR="${HOME}/.local/bin"
 DRY_RUN=0
 ASSUME_YES=0
 
 usage() {
-  echo "Usage: $0 [--dry-run] [--yes] [--agents-dir PATH] [--claude-dir PATH] [--antigravity-dir PATH] [--bin-dir PATH]"
+  echo "Usage: $0 [--dry-run] [--yes] [--agents-dir PATH] [--claude-dir PATH] [--antigravity-dir PATH] [--t3-dir PATH] [--bin-dir PATH]"
 }
 
 while (($#)); do
@@ -37,6 +38,11 @@ while (($#)); do
     --antigravity-dir)
       [[ $# -ge 2 ]] || { usage >&2; exit 2; }
       ANTIGRAVITY_DIR=$2
+      shift 2
+      ;;
+    --t3-dir)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      T3_DIR=$2
       shift 2
       ;;
     --bin-dir)
@@ -65,6 +71,12 @@ LEGACY_BACKUP_DIR="$AGENTS_DIR/5stack-backups/v1"
 SKILLS_DIR="$AGENTS_DIR/skills"
 CLAUDE_SKILLS_DIR="$CLAUDE_DIR/skills"
 ANTIGRAVITY_SKILLS_DIR="$ANTIGRAVITY_DIR/skills"
+# T3 Code runs Antigravity with a private config folder per provider instance.
+# T3 links skills there itself, but not global rules.
+T3_ANTIGRAVITY_CONFIGS=()
+for config in "$T3_DIR"/providers/antigravity/*/config; do
+  [[ -d "$config" ]] && T3_ANTIGRAVITY_CONFIGS+=("$config")
+done
 ROOT_LINK="$AGENTS_DIR/brigade"
 BIN_LINK="$BIN_DIR/brigade"
 LEGACY_ROOT_LINK="$AGENTS_DIR/5stack"
@@ -117,6 +129,9 @@ say_action() {
 confirm_global_installation "$AGENTS_DIR/AGENTS.md" "$STACK_REPO/AGENTS.md" "$BACKUP_DIR/AGENTS.md"
 confirm_global_installation "$CLAUDE_DIR/CLAUDE.md" "$STACK_REPO/AGENTS.md" "$CLAUDE_BACKUP_DIR/CLAUDE.md"
 confirm_global_installation "$ANTIGRAVITY_DIR/AGENTS.md" "$STACK_REPO/AGENTS.md" "$ANTIGRAVITY_BACKUP_DIR/AGENTS.md"
+for config in "${T3_ANTIGRAVITY_CONFIGS[@]}"; do
+  confirm_global_installation "$config/AGENTS.md" "$STACK_REPO/AGENTS.md" "$BACKUP_DIR/t3-antigravity/$(basename -- "$(dirname -- "$config")")/AGENTS.md"
+done
 
 install_link() {
   local source_path=$1 target_path=$2 backup_path=$3 expected_source actual_target
@@ -186,6 +201,9 @@ install_link "$STACK_REPO" "$ROOT_LINK" "$BACKUP_DIR/root"
 install_link "$STACK_REPO/AGENTS.md" "$AGENTS_DIR/AGENTS.md" "$BACKUP_DIR/AGENTS.md"
 install_link "$STACK_REPO/AGENTS.md" "$CLAUDE_DIR/CLAUDE.md" "$CLAUDE_BACKUP_DIR/CLAUDE.md"
 install_link "$STACK_REPO/AGENTS.md" "$ANTIGRAVITY_DIR/AGENTS.md" "$ANTIGRAVITY_BACKUP_DIR/AGENTS.md"
+for config in "${T3_ANTIGRAVITY_CONFIGS[@]}"; do
+  install_link "$STACK_REPO/AGENTS.md" "$config/AGENTS.md" "$BACKUP_DIR/t3-antigravity/$(basename -- "$(dirname -- "$config")")/AGENTS.md"
+done
 install_link "$STACK_REPO/bin/brigade" "$BIN_LINK" "$BACKUP_DIR/bin/brigade"
 install_link "$STACK_REPO/bin/5stack" "$LEGACY_BIN_LINK" "$BACKUP_DIR/bin/5stack"
 
