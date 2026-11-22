@@ -34,7 +34,7 @@ bash scripts/check.sh
 bash scripts/install.sh
 ```
 
-The installer links the repository at `~/.agents/brigade`, then links Brigade-owned instructions and skills into `~/.agents`, `~/.claude`, and Antigravity's `~/.gemini/config`. It installs `brigade` into `~/.local/bin` and keeps `5stack` as a temporary compatibility alias. Existing worker history remains in the old state path when present, and existing `5stack-backups` remain available for safe restoration. Before creating or replacing global instructions, it shows the change and asks for confirmation before making any changes. When replacing an existing path, it also shows its backup path. It backs up conflicting files and does not remove unrelated skills. Start a fresh agent session after installation.
+The installer links the repository at `~/.agents/brigade`, then links Brigade-owned instructions and skills into `~/.agents`, `~/.claude`, and Antigravity's `~/.gemini/config`. T3 Code runs Antigravity with its own config folder under `~/.t3/userdata/providers/antigravity/`, so the installer also links the global instructions into each existing folder there. Re-run the installer after T3 Code creates a new Antigravity provider. It installs `brigade` into `~/.local/bin` and keeps `5stack` as a temporary compatibility alias. Existing worker history remains in the old state path when present, and existing `5stack-backups` remain available for safe restoration. Before creating or replacing global instructions, it shows the change and asks for confirmation before making any changes. When replacing an existing path, it also shows its backup path. It backs up conflicting files and does not remove unrelated skills. Start a fresh agent session after installation.
 
 Worker backends are optional. Check them with:
 
@@ -54,7 +54,7 @@ To preview changes:
 bash scripts/install.sh --dry-run
 ```
 
-Use `--claude-dir PATH` or `--antigravity-dir PATH` to select the Claude Code or Antigravity configuration directory for tests or another installation location.
+Use `--claude-dir PATH`, `--antigravity-dir PATH`, or `--t3-dir PATH` to select the Claude Code, Antigravity, or T3 Code data directory for tests or another installation location.
 
 To remove Brigade-owned links and restore safe backups:
 
